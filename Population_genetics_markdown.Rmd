@@ -1,0 +1,248 @@
+---
+title: "Population genetics"
+author: "Baron Stacks"
+date: '2022-08-19'
+output: html_document
+---
+
+## Load packages
+```{r, warning=FALSE, echo = FALSE}
+library(tidyverse)
+library(dartR)
+library(poppr)
+library(vcfR)
+library(adegenet)
+library(hierfstat)
+library(pophelper)
+library(gridExtra)
+library(ggpubr)
+library(strataG)
+```
+## Read in data and create genind object with populations
+```{r, echo = FALSE}
+in_vcf <- read.vcfR("", convertNA = T)
+genlight <- vcfR2genlight(in_vcf)
+#to drop any indvs
+# Alewife.genlight <- gl.drop.ind(Alewife.genlight, ind.list = c("RH1","RH2"),mono.rm = TRUE)
+#get popmap for filtered dataset
+indvs.filtered <- as.data.frame(Alewife.genlight@ind.names)
+names(indvs.filtered) <- "V1" # set column name to match import
+popmap.orig <- read.delim("./SNP_Filtering/popmap_final.txt", header = F)
+popmap.filtered <- merge(indvs.filtered,popmap.orig,all.x = T)
+#add population information from popmap
+Alewife.genlight@pop <- as.factor(popmap.filtered$V2)
+# Alewife.genlight
+Alewife.genind <- gl2gi(Alewife.genlight) # need genind format for some functions
+# Alewife.genind
+summary(Alewife.genlight@pop)
+# write.csv(x = summary(Alewife.genlight@pop), file = "Alewife.genlight_pop.csv")
+```
+### Subset genlight object by population
+```{r}
+#separate out the population-year combinations
+Alewife.pops <- seppop(Alewife.genlight)
+#use rbind to combine populations or years
+# Alewife.subset <- rbind(Alewife.pops$Dennis_2004, Alewife.pops$GrandFalls_2019, Alewife.pops$Milltown_2004, Alewife.pops$Milltown_2018, Alewife.pops$Woodland_2019)
+```
+## PCA 
+Proportion of variation explained by PCA axes
+```{r, echo = FALSE}
+pca1 <- glPca(Alewife.genlight,center = T, scale = T, nf = 5)
+barplot(100*pca1$eig/sum(pca1$eig), col = heat.colors(50), main="PCA Eigenvalues") # retain first 5 axes, incremental decrease after 2
+title(ylab="Percent of variance\nexplained", line = 2)
+title(xlab="Eigenvalues", line = 1)
+#proportion of explained variance by first three axes
+a1<-pca1$eig[1]/sum(pca1$eig) # proportion of variation explained by 1st axis
+a2<-pca1$eig[2]/sum(pca1$eig) # proportion of variation explained by 2nd axis 
+a3<-pca1$eig[3]/sum(pca1$eig) # proportion of variation explained by 3rd axis
+pcvar <- data.frame(Axis = c(1:3), Proportion = c(a1,a2,a3))
+pcvar
+```
+### Extract PC scores to color by location/yr:
+(adapted from [Grunwald lab github](https://github.com/grunwaldlab/Population_Genetics_in_R/blob/master/gbs_analysis.Rmd#principal-components-analysis))
+```{r, fig.width = 6,fig.height = 6, echo = FALSE}
+pca1.scores <- as.data.frame(pca1$scores)
+pca1.scores$pop <- pop(Alewife.genlight)
+pca1.scores$reg <- pca1.scores$pop
+```
+### Generate PCA plots
+```{r}
+set.seed(9)
+# #Alternative pop/year color palettes adapted from RColorBrewer "paired" palette:
+# pop_cols <- c("#CAB2D6", "#FDBF6F", "#FF7F00", "#FB9A99", "#E31A1C", "#A6CEE3", "#1F78B4", "#33A02C")
+# pop_cols <- c("#E31A1C","#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C","#FDBF6F", "#FF7F00", "#FFFF00")
+pop_cols <- c("#FFFF00","#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C","#FDBF6F", "#FF7F00", "#E31A1C")
+# plot PC 1 and 2
+p12 <- ggplot(pca1.scores, aes(x=PC1, y=PC2, colour=pop,))
+p12 <- p12 + geom_point(size=2,shape=17)
+p12 <- p12 + stat_ellipse(level = 0.95, size = 1)
+p12 <- p12 + scale_color_manual(values = pop_cols, name = "Locality and Year", labels = levels(Alewife.genlight@pop))
+p12 <- p12 + geom_hline(yintercept = 0) 
+p12 <- p12 + geom_vline(xintercept = 0) 
+p12 <- p12 + theme_classic()
+p12
+# #plot  PC 2 and 3: not informative for this dataset
+# p13 <- ggplot(pca1.scores, aes(x=PC1, y=PC3, colour=pop))
+# p13 <- p13 + geom_point(size=2,shape=17)
+# p13 <- p13 + stat_ellipse(level = 0.95, size = 1)
+# p13 <- p13 + scale_color_manual(values = pop_cols, name = "Locality and Year", labels = levels(Alewife.genlight@pop))
+# p13 <- p13 + geom_hline(yintercept = 0) 
+# p13 <- p13 + geom_vline(xintercept = 0) 
+# p13 <- p13 + theme_bw()
+# p13
+# "Warning: Probable convergence failure" appears when running PC 1,2. Has to do with underlying distribution used in stat_ellipse. Does this mean it is inappropriate to visualise that way? Doesn't happen with PC 1,3
+# ggsave("p12.pdf", width = 7, height=7)
+```
+## DAPC
+### Find elbow in plot of BIC vs. K
+```{r}
+#Change plot window to make it easier to visualize trends as # of PCs increases.
+par(mfrow = c(2,2))
+#find clusters
+# k <- find.clusters(Alewife.genlight, scale = FALSE)
+#Loop over different numbers of PCs and plot k vs BIC
+#Values originally 15-100, changed to 1-50
+for(i in seq(1, 50, by = 5)){
+  var <- paste0("k.",i,".PCs") #Make name to save output
+  k <- find.clusters(genlight, scale = FALSE, n.pca = i, choose.n.clust = FALSE, criterion = "diffNgroup") #run main function
+  plot(k$Kstat, type = "b", col = "blue", main = paste0("PCs = ", i), ylab = "BIC", xlab = "k value") #Plot results
+  assign(var, k) #Save output
+}
+```
+### Run DAPC analysis to find optimal number of PCs
+If scale is set to TRUE, then uninformative alleles may be given more weight
+Set number of PCs to highest number of PCs that returns a reasonable k vs BIC plot. Select a k value that you think reasonably represents the data
+```{r}
+#Change plot window back to default
+par(mfrow = c(1,1))
+PCs <- 50
+clust <- 2
+k <- find.clusters(Alewife.genlight, scale = FALSE, n.pca = PCs, n.clust = clust)
+#Run DAPC using clusters and PCs specified above
+#First time: copy and paste this line into the console--interactive:
+#dapc1 <- dapc(genlight, k$grp, n.pca = PCs)
+dapc1 <- dapc(genlight, k$grp, n.pca = PCs, n.da = 1)
+#Optimize a score to find the number of PCs that minimizes false assignment
+optim_a <- optim.a.score(dapc1)
+k2 <- find.clusters(Alewife.genlight, scale = FALSE, n.pca = optim_a$best, n.clust = clust)
+#First time: copy and paste this line into the console--interactive:
+#dapc2 <- dapc(genlight, k2$grp, n.pca = optim_a$best)
+dapc2 <- dapc(genlight, k2$grp, n.pca = optim_a$best, n.da = 1)
+#a <- a.score(dapc1) #Look at a scores
+#Plot results - change colors because Blair made fun of me
+scatter.dapc(dapc2, pch = 19)
+```
+## Genetic Diversity and FST
+Calculate pop-level diversity, pooling the two time periods
+```{r, echo=FALSE}
+# options(scipen = 999)
+Sum <- summary(Alewife.genind)
+Hobs <- t(sapply(seppop(Alewife.genind), function(ls) summary(ls)$Hobs))
+Hexp <- t(sapply(seppop(Alewife.genind), function(ls) summary(ls)$Hexp))
+Sum$n.by.pop
+Hobs.pop <- apply(Hobs, MARGIN = 1, FUN = mean)
+Hexp.pop <- apply(Hexp, 1, mean) 
+bypop <- seppop(Alewife.genind)
+bypop.basic <- lapply(X=bypop, FUN=basic.stats)
+basicstatbypop <- data.frame(matrix(ncol = 10, nrow = 8))
+names(basicstatbypop) <- names(bypop.basic[[1]]$overall)
+for (i in 1:length(bypop)){
+  basicstatbypop[i,] <- bypop.basic[[i]]$overall
+}
+gendivstats <- as.data.frame(cbind(levels(Alewife.genlight@pop),Sum$n.by.pop,round(Hobs.pop, 4),round(Hexp.pop, 4), basicstatbypop$Fis))
+names(gendivstats) <- c("Pop","N", "Hobs", "Hexp", "FIS")
+gendivstats$FIS <- as.numeric(gendivstats$FIS)
+# as_tibble(basicstatbypop)
+as_tibble(gendivstats)
+``` 
+### Get 95% bootstrap CI for FIS
+```{r}
+Fis <- lapply(X=bypop,FUN=boot.ppfis)
+Fis.df <- data.frame(matrix(ncol = 2, nrow = 8))
+names(Fis.df) <- c("ll","hl")
+for (i in 1:length(Fis)) {
+  Fis.df$ll[i] <- Fis[[i]][2]$fis.ci[1,1]
+  Fis.df$hl[i] <- Fis[[i]][2]$fis.ci[1,2]
+  }
+Fis.df <- cbind(gendivstats[,c(1,5)],Fis.df)
+as_tibble(Fis.df)
+```
+### Visualize heterozygosity
+```{r}
+pop_cols <- c("#FFFF00","#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C","#FDBF6F", "#FF7F00", "#E31A1C")
+  
+pobs <- ggplot(gendivstats, aes(x = factor(Pop), y = Hobs.pop, color = Pop))
+pobs <- pobs + geom_point(size = 3)
+pobs <- pobs + scale_color_manual(values = pop_cols)
+pobs <- pobs + labs(title = "Population level observed heterozygosity", 
+         x = "Population", y = "Observed het")
+pobs <- pobs + theme_classic()
+pobs <- pobs + theme(axis.text.x = element_text(angle=45, hjust=1))
+pexp <- ggplot(gendivstats, aes(x = factor(Pop), y = Hexp.pop, color = Pop))
+pexp <- pexp + geom_point(size = 3)
+pexp <- pexp + scale_color_manual(values = pop_cols) 
+pexp <- pexp + labs(title = "Population level expected heterozygosity", 
+         x = "Population", y = "Expected het")
+pexp <- pexp + theme_classic()
+pexp <- pexp + theme(axis.text.x = element_text(angle=45, hjust=1))
+pfis <- ggplot(gendivstats, aes(x = factor(Pop), y = as.numeric(format(FIS, scientific = F)), color = Pop)) 
+pfis <- pfis + geom_abline(slope = 0, color = "gray")  
+pfis <- pfis + geom_point(size = 3) 
+pfis <- pfis + scale_color_manual(values = pop_cols) 
+pfis <- pfis + labs(title = "Population level inbreeding coefficient", 
+         x = "Population", y = "FIS")
+pfis <- pfis + theme_classic()
+pfis <- pfis + theme(axis.text.x = element_text(angle=45, hjust=1))
+pobs
+pexp
+pfis
+```
+## Genetic distance between locality and year combos. This is FST but can easily change
+```{r, echo = FALSE}
+pop.fst <- genet.dist(Alewife.genind, method = "WC84")
+pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
+pop.fst.df
+# write.csv(pop.fst.df,"RH_M3_fst.csv")
+```
+## Genetic structure
+Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
+The first portion can be skipped if using structure_threader and plot.ly to generate barplots.
+```{r, fig.width = 6,fig.height = 6}
+# sfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*meanQ",full.names = T)
+# slist <- readQ(files=sfiles)
+# 
+# labels <- popmap.filtered
+# labels$sort <- recode(labels$V2, EastGrand_2004="a", EastGrand_2018="b", 
+#                            GrandFalls_2004="c", GrandFalls_2019="d", Woodland_2019="e",
+#                            Milltown_2004="f", Milltown_2018="g",
+#                            Dennis_2004="h")
+#fastStructure barplots don't display easily in markdown so the following code writes to a file called "qplot.png". Colors are not meaningful from one K to the next.
+# #this is kind of clunky
+# pq <- plotQ(slist[c(1,3:9,2),1)],imgoutput="join",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/",outputfilename = "qplot",imgtype="png",basesize=11, grplab=labels[,2:3], selgrp = "sort", ordergrp = T, grplabsize=4, grplabangle = 20,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# 
+# s2 <- readQ("./RH_M3_fastStructure/RH_M3/fS_run_K.2.meanQ", indlabfromfile = FALSE)
+# rownames(s2[[1]]) <- labels$V1
+# pindv <- plotQ(s2,imgoutput="sep",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/RH_M3/",outputfilename = "K2",imgtype="png",basesize=11, selgrp = "sort", grplab=labels, ordergrp = T, grplabsize=2, grplabangle = 90,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# Plot Marginal Likelihood vs. K
+lfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*log",full.names = T)
+lfiles
+k.df <- data.frame(matrix(ncol = 2, nrow = 10))
+names(k.df) <- c("K","Marginal_Likelihood")
+# Filenames are out of order, 10 comes before 2, so need to fix that
+k.df$K <- c(1,10,2,3,4,5,6,7,8,9)
+for (i in 1:length(lfiles)){
+  k.df$Marginal_Likelihood[i] <- 
+    as.numeric(str_sub(grep("Marginal Likelihood = ", 
+                            readLines(lfiles[[i]],),value = TRUE),-13))
+}
+k.df <- k.df[order(k.df$K),]
+# fastStructure provides 2 metrics for determining the "best" K
+readLines("./RH_M3_fastStructure/RH_M3/bestK/chooseK.txt")
+q <- ggplot(k.df, mapping = aes(x=K, y=Marginal_Likelihood))
+q <- q + ylim(-1,-0.5)
+q <- q + geom_point(size=3, shape = 16)
+q <- q + labs(x="K", y="Marginal Likelihood")
+q <- q + theme_classic()
+q
+# ggsave("./SNP_Filtering/RH_M3_fastStructure/RH_M3/Kplot.png", width = 4.5, height=4)
+```
