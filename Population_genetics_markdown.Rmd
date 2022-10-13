@@ -17,33 +17,54 @@ library(pophelper)
 library(gridExtra)
 library(ggpubr)
 library(strataG)
+library(mapdata)
+library(viridis)
+library(poppr)
+library(wesanderson)
+library(ape)
+library(reshape2)
 ```
+
 ## Read in data and create genind object with populations
+Note that the population map should be two columns: sample ID and linked population.
 ```{r, echo = FALSE}
-in_vcf <- read.vcfR("", convertNA = T)
-genlight <- vcfR2genlight(in_vcf)
-#to drop any indvs
-# Alewife.genlight <- gl.drop.ind(Alewife.genlight, ind.list = c("RH1","RH2"),mono.rm = TRUE)
-#get popmap for filtered dataset
-indvs.filtered <- as.data.frame(Alewife.genlight@ind.names)
-names(indvs.filtered) <- "V1" # set column name to match import
-popmap.orig <- read.delim("./SNP_Filtering/popmap_final.txt", header = F)
-popmap.filtered <- merge(indvs.filtered,popmap.orig,all.x = T)
-#add population information from popmap
-Alewife.genlight@pop <- as.factor(popmap.filtered$V2)
-# Alewife.genlight
-Alewife.genind <- gl2gi(Alewife.genlight) # need genind format for some functions
-# Alewife.genind
-summary(Alewife.genlight@pop)
-# write.csv(x = summary(Alewife.genlight@pop), file = "Alewife.genlight_pop.csv")
+#Read in VCF file
+in_vcf <- read.vcfR("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/UroFull_M1n6_filtered.vcf", convertNA = T)
+
+#Convert vcf to genlight
+genlight.orig <- vcfR2genlight(in_vcf)
+
+#Read in white list of individuals. This should be a text file with a single column containing the names of the individuals that were retained after filtering.
+whitelist.indvs <- read.delim("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/Whitelist_indivs.txt", header = F) %>% pull()
+
+#Read in the population map. This should be a two-column tab-delimited text file where the first column contains the name of each individual sample and the second column contains the population. This can be the same as the population map used in Stacks.
+popmap.orig <- read_tsv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/popmap_full.txt", col_names = F) %>% 
+  dplyr::rename(Indiv = X1, STRATA = X2)
+
+
+#-------------------Subset the full set of samples for analysis------------------------
+#Only run this section if you want to run the analysis on a subset of individuals included in the filtered VCF file. If you want to run on all the samples in the vcf file that was loaded, then skip this section
+
+#Create a blacklist of individuals that we don't want to include in the analysis so we can drop them from the genlight object
+blacklist.indvs <- popmap.orig %>% dplyr::filter(!Indiv %in% whitelist.indvs) %>% 
+  pull(Indiv)
+
+#To drop blacklisted individuals. Note that this will not run if the blacklist solely includes individuals that were already filtered.
+genlight <- gl.drop.ind(genlight.orig, ind.list = blacklist.indvs, mono.rm = TRUE)
+
+
+#-------------------Finish creating genlight and genind objects--------------------------
+# Filter the population map for whitelisted individuals i.e. those we will keep for the population genetics analysis.
+popmap.filtered <- tibble(Indiv = genlight@ind.names) %>% left_join(popmap.orig, by = "Indiv")
+
+genlight@pop <- as.factor(popmap.filtered$STRATA)
+genind <- gl2gi(genlight) # need genind format for some functions
+genind@pop <- factor(popmap.filtered$STRATA)
+summary(genlight@pop)
+summary(genind@pop)
 ```
-### Subset genlight object by population
-```{r}
-#separate out the population-year combinations
-Alewife.pops <- seppop(Alewife.genlight)
-#use rbind to combine populations or years
-# Alewife.subset <- rbind(Alewife.pops$Dennis_2004, Alewife.pops$GrandFalls_2019, Alewife.pops$Milltown_2004, Alewife.pops$Milltown_2018, Alewife.pops$Woodland_2019)
-```
+
+
 ## PCA 
 Proportion of variation explained by PCA axes
 ```{r, echo = FALSE}
@@ -58,6 +79,7 @@ a3<-pca1$eig[3]/sum(pca1$eig) # proportion of variation explained by 3rd axis
 pcvar <- data.frame(Axis = c(1:3), Proportion = c(a1,a2,a3))
 pcvar
 ```
+
 ### Extract PC scores to color by location/yr:
 (adapted from [Grunwald lab github](https://github.com/grunwaldlab/Population_Genetics_in_R/blob/master/gbs_analysis.Rmd#principal-components-analysis))
 ```{r, fig.width = 6,fig.height = 6, echo = FALSE}
@@ -65,6 +87,7 @@ pca1.scores <- as.data.frame(pca1$scores)
 pca1.scores$pop <- pop(Alewife.genlight)
 pca1.scores$reg <- pca1.scores$pop
 ```
+
 ### Generate PCA plots
 ```{r}
 set.seed(9)
@@ -93,6 +116,7 @@ p12
 # "Warning: Probable convergence failure" appears when running PC 1,2. Has to do with underlying distribution used in stat_ellipse. Does this mean it is inappropriate to visualise that way? Doesn't happen with PC 1,3
 # ggsave("p12.pdf", width = 7, height=7)
 ```
+
 ## DAPC
 ### Find elbow in plot of BIC vs. K
 ```{r}
@@ -109,6 +133,7 @@ for(i in seq(1, 50, by = 5)){
   assign(var, k) #Save output
 }
 ```
+
 ### Run DAPC analysis to find optimal number of PCs
 If scale is set to TRUE, then uninformative alleles may be given more weight
 Set number of PCs to highest number of PCs that returns a reasonable k vs BIC plot. Select a k value that you think reasonably represents the data
@@ -132,6 +157,7 @@ dapc2 <- dapc(genlight, k2$grp, n.pca = optim_a$best, n.da = 1)
 #Plot results - change colors because Blair made fun of me
 scatter.dapc(dapc2, pch = 19)
 ```
+
 ## Genetic Diversity and FST
 Calculate pop-level diversity, pooling the two time periods
 ```{r, echo=FALSE}
@@ -167,6 +193,7 @@ for (i in 1:length(Fis)) {
 Fis.df <- cbind(gendivstats[,c(1,5)],Fis.df)
 as_tibble(Fis.df)
 ```
+
 ### Visualize heterozygosity
 ```{r}
 pop_cols <- c("#FFFF00","#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C","#FDBF6F", "#FF7F00", "#E31A1C")
@@ -204,6 +231,7 @@ pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
 pop.fst.df
 # write.csv(pop.fst.df,"RH_M3_fst.csv")
 ```
+
 ## Genetic structure
 Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
 The first portion can be skipped if using structure_threader and plot.ly to generate barplots.
