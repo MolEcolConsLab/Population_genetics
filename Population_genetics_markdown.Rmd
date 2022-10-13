@@ -83,53 +83,106 @@ pcvar <- data.frame(Axis = c(1:3), Proportion = c(a1,a2,a3))
 pcvar
 ```
 
-<<<<<<< HEAD
-=======
 
-
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
-### Extract PC scores to color by location/yr:
-(adapted from [Grunwald lab github](https://github.com/grunwaldlab/Population_Genetics_in_R/blob/master/gbs_analysis.Rmd#principal-components-analysis))
+### Generate PCA plots
 ```{r, fig.width = 6,fig.height = 6, echo = FALSE}
+# Extract PC scores to color by location/yr:
+# Adapted from https://github.com/grunwaldlab/Population_Genetics_in_R/blob/master/gbs_analysis.Rmd#principal-components-analysis
+                                    
 pca1.scores <- as.data.frame(pca1$scores)
 pca1.scores$pop <- pop(genlight)
 pca1.scores$reg <- pca1.scores$pop
-```
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
-### Generate PCA plots
-```{r}
+#Make PCA plots
 set.seed(9)
-num_pops <- length(levels(factor(popmap.filt)))
+num_pops <- length(levels(factor(popmap.filtered$STRATA)))
 pop_cols <- get_palette(k = num_pops, palette = "Set1")
 
 # plot PC 1 and 2
-p12 <- ggplot(pca1.scores, aes(x=PC1, y=PC2, colour=pop))
-p12 <- p12 + geom_point(size=2,shape=17)
-p12 <- p12 + stat_ellipse(level = 0.95, size = 1)
-p12 <- p12 + scale_color_manual(values = pop_cols, name = "Locality and Year", labels = levels(genlight@pop))
-p12 <- p12 + geom_hline(yintercept = 0) 
-p12 <- p12 + geom_vline(xintercept = 0) 
-p12 <- p12 + theme_classic()
-p12
-# #plot  PC 2 and 3: not informative for this dataset
-# p13 <- ggplot(pca1.scores, aes(x=PC1, y=PC3, colour=pop))
-# p13 <- p13 + geom_point(size=2,shape=17)
-# p13 <- p13 + stat_ellipse(level = 0.95, size = 1)
-# p13 <- p13 + scale_color_manual(values = pop_cols, name = "Locality and Year", labels = levels(Alewife.genlight@pop))
-# p13 <- p13 + geom_hline(yintercept = 0) 
-# p13 <- p13 + geom_vline(xintercept = 0) 
-# p13 <- p13 + theme_bw()
-# p13
+ggscatter(pca1.scores, x = "PC1", y = "PC2", shape = "pop", color = "pop",
+          palette = pop_cols, ellipse = T, ellipse.level = 0.95,
+          xlab = paste0("PC1 (",round(pcvar[1,2]*100,2),"%)"),
+          ylab = paste0("PC2 (",round(pcvar[2,2]*100,2),"%)"))
 
+# #plot  PC 2 and 3: not informative for this dataset
+ggscatter(pca1.scores, x = "PC2", y = "PC3", shape = "pop", color = "pop",
+          palette = pop_cols, ellipse = T, ellipse.level = 0.95,
+          xlab = paste0("PC2 (",round(pcvar[2,2]*100,2),"%)"),
+          ylab = paste0("PC3 (",round(pcvar[3,2]*100,2),"%)"))
 # ggsave("p12.pdf", width = 7, height=7)
 ```
 
-<<<<<<< HEAD
+## Genetic Diversity and FST
+## Recommend running the pair-wise FST estimate ONCE, then writing a file to read in for next steps to avoid ~20 min run times each time the chunk is run
+```{r, echo = FALSE}
+#Calculate pairwise FST
+pop.fst <- genet.dist(genind, method = "WC84") # Run time ~20 mins
+pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
+pop.fst.df #Look at matrix of Fst values
+write.csv(pop.fst.df,"fileName.csv")
+#pop.fst.df<-read.csv(file="fileName.csv", header = T)
+
+#Format Fst dataframe
+pop.fst.tri <- pop.fst.df
+pop.fst.tri[lower.tri(pop.fst.df, diag=TRUE)] <- NA
+fst.mat = data.matrix(pop.fst.tri)
+melted <- melt(fst.mat, na.rm =TRUE)
+
+#Plot heatmap of Fst among populations
+ggplot(data = melted, aes(Var2, Var1, fill = value))+ geom_tile(color = "white")+ scale_fill_gradient(low = "white", high = "navy", name="FST")  + ggtitle(expression(atop("Pairwise FST, WC (1984)", atop(italic("N = 113, L = 4200"), ""))))+labs( x = "Sampling Site", y = "Sampling Site") + theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),axis.text.y = element_text(size = 12)) + coord_fixed()
+```
+
+### Isolation-by-distance model
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude
+region <- read.csv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/03_PopGen/uro_regions.csv", header = T)
+
+#Tibbles will only show a couple sig digits for lat and long, but the full coordinates are stored.
+latlon <- as.data.frame(cbind(region$Population,
+                            region$lat,
+                            region$lon)) %>% 
+  dplyr::rename(STRATA = V1, lat = V2, lon = V3) %>% 
+    mutate(lat = as.numeric(lat), lon = as.numeric(lon))
+
+#Replicate the coordinates for each sample
+all_latlon <- popmap.filtered %>% left_join(latlon, by = "STRATA") %>% 
+  dplyr::select(-Indiv)
+
+latlon <- all_latlon[,2:3]
+genlight@other$latlong<-latlon
+gl.ibd(genlight)
+
+```
+
+
+*Show heterozygosity plots and values per population*
+```{r}
+het<-as.data.frame(t(genind@tab))
+hetl<-list()
+for(q in 1:ncol(het)){
+  df<-as.data.frame(het[,q])
+  sample<-colnames(het)[q]
+  df<-as.data.frame(df[!is.na(df),])
+  df2<-as.data.frame(df[df$`df[!is.na(df), ]` == 1,])
+  nHet<-nrow(df2)
+  nTot<-nrow(df)
+  hTot<-nHet/nTot
+  hdf<-as.data.frame(cbind(sample, hTot))
+  hdf$pop<-substr(hdf$sample, 1, 2)
+  hetl[[q]]<-hdf
+}
+hetdf<-do.call(rbind, hetl)
+hetdf$hTot<-as.numeric(hetdf$hTot)
+
+ggscatter(hetdf, x = "pop", y = "hTot", color = "pop", palette = pop_cols,
+          xlab = "Population", ylab = "Heterozygosity", legend = "none") +
+  font("xlab", face = "bold") + font("ylab", face = "bold")
+```
+
+
+###JDS: PICK UP HERE AFTER 10/13/2022
+
+
 ## DAPC
 ### Find elbow in plot of BIC vs. K
 ```{r}
