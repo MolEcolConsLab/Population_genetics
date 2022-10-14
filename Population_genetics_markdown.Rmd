@@ -26,7 +26,6 @@ library(reshape2)
 ```
 
 
-
 ## Read in data and create genind object with populations
 Note that the population map should be two columns: sample ID and linked population.
 ```{r, echo = FALSE}
@@ -180,30 +179,6 @@ ggscatter(hetdf, x = "pop", y = "hTot", color = "pop", palette = pop_cols,
 ```
 
 
-###JDS: PICK UP HERE AFTER 10/13/2022
-
-
-## DAPC
-### Find elbow in plot of BIC vs. K
-```{r}
-#Change plot window to make it easier to visualize trends as # of PCs increases.
-par(mfrow = c(2,2))
-#find clusters
-# k <- find.clusters(Alewife.genlight, scale = FALSE)
-#Loop over different numbers of PCs and plot k vs BIC
-#Values originally 15-100, changed to 1-50
-for(i in seq(1, 50, by = 5)){
-  var <- paste0("k.",i,".PCs") #Make name to save output
-  k <- find.clusters(genlight, scale = FALSE, n.pca = i, choose.n.clust = FALSE, criterion = "diffNgroup") #run main function
-  plot(k$Kstat, type = "b", col = "blue", main = paste0("PCs = ", i), ylab = "BIC", xlab = "k value") #Plot results
-  assign(var, k) #Save output
-}
-```
-
-### Run DAPC analysis to find optimal number of PCs
-If scale is set to TRUE, then uninformative alleles may be given more weight
-Set number of PCs to highest number of PCs that returns a reasonable k vs BIC plot. Select a k value that you think reasonably represents the data
-=======
 
 ## Genetic Diversity and FST
 ## Genetic distance between locality and year combos. This is FST but can easily change
@@ -220,12 +195,14 @@ The chunk here is to determine the optimal value of K (clusters) to use for down
 
 "The rule of thumb consists in increasing K until it no longer leads to an appreciable improvement of fit (i.e., to a decrease of BIC). In the most simple models (island models), BIC decreases until it reaches the optimal K, and then increases. In these cases, our rule amounts to choosing the lowest K. In other models such as stepping stones, the decrease of BIC often continues after the optimal K, but is much less steep."
 ```{r, echo=TRUE}
-n_individuals <- length(popmap.filt)
-n_pops <- length(levels(factor(popmap.filt)))
+n_individuals <- nrow(popmap.filtered)
+n_pops <- length(levels(factor(popmap.filtered$STRATA)))
 
 grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200,
                          choose.n.clust = FALSE)
+
 BIC<-as.data.frame(cbind(seq(1,n_pops,1), grp_all$Kstat))
+
 ggline(BIC, x = "V1", y = "V2", plot_type = "b",
        col = "navy",
        xlab = "Number of clusters (K)",
@@ -236,41 +213,46 @@ grp_all$Kstat
 ```
 
 
-Based on the output of the plot above, we select the optimal value of K. In this case, K=6, and observe the number of samples per cluster:
+Based on the output of the plot above, we select the optimal value of K and observe the number of samples per cluster. Set k to the value with the lowest BIC score.
 ```{r, echo=TRUE}
-grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200, n.clust = 6)
+k <- 5
+grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200, n.clust = k)
 grp_all$size
 ```
 
 Run the DPCA and generate the plots for visualizing
 Selecting the right number of DAs is important as it impacts the downstream outputs, and too many PCAs can lead to over-fitting the data.
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
 ```{r}
-dapc <- dapc(genind, grp_all$grp, n.pca=60, n.da = 5, var.contrib = TRUE)
-pal <- get_palette("Accent", k=6)
+n.da <- 5 #Set number of DAs
+dapc <- dapc(genind, grp_all$grp, n.pca=60, n.da = n.da, var.contrib = TRUE)
+pal <- get_palette("Accent", k = k)
 dpca_result <- scatter(dapc, col=pal, scree.pca = TRUE,
                        pch = 20, cell = 0, cstar = 1,
                        solid = 0.8, cex = 3, clab = 1)
 set.seed(4)
 #contrib<-loadingplot(dapc$var.contr,axis=2, thres=.002,lab.jitter=1)
-compoplot(dapc, posi="topleft", txt.leg=paste("Cluster",1:6),
+compoplot(dapc, posi="topleft", txt.leg=paste("Cluster",c(1:k)),
           ncol=1, xlab="Individuals", col=pal, lab=genind@pop, show.lab = T)
+
 dapc$IND <- row.names(dapc$ind.coord)
+
 dapc_info <- as.data.frame(cbind(dapc$IND, dapc$ind.coord, grp_all$grp))
+
 colnames(dapc_info) <- c("IND","DPC1", "DPC2", "DPC3", "DPC4", "DPC5", "K")
-dapc_info$SITE <- substr(dapc_info$IND, 1,2)
+colnames(dapc_info) <- c("IND", c(paste0("DPC", 1:(n.da-1))), "K")
+dapc_info$SITE <- substr(dapc_info$IND, 1,2) #Takes first two letters of the Indv name and adds to the columns "SITE"
 dapc_info
 ```
 
-<<<<<<< HEAD
-## Genetic Diversity and FST
-Calculate pop-level diversity, pooling the two time periods
-=======
-*Now use the first DPCA to inform a secondary DPCA using priors*
+*Now use the first DPCA to inform a secondary DPCA*
+
+**Q:** Why are we calling this a prior? Aren't we just empirically determining the best number of PCs to retain for DAPC?
+
 ```{r, echo=TRUE}
-set.seed(5); dapc_a_score <- dapc(genind,n.pca=100,n.da=10) 
-temp_score <- optim.a.score(dapc_a_score)
-dapc2 <-dapc(genind,genind@pop, n.pca=12, n.da=5)
+set.seed(5); dapc_a_score <- dapc(genind, n.pca=100, n.da=n.da) 
+temp_score <- optim.a.score(dapc_a_score) #Determine best number of PCs to retain for DAPC analysis
+n.pc <- temp_score$best #Save best number of PCs
+dapc2 <-dapc(genind,genind@pop, n.pca = n.pc, n.da = n.da)
 dapc2$IND <- row.names(dapc2$ind.coord)
 dapc2_info <- as.data.frame(cbind(dapc2$IND, dapc2$ind.coord, grp_all$grp))
 
@@ -278,31 +260,27 @@ dpca_result <- scatter(dapc2, col=pal, scree.pca = TRUE,
                        pch = 20, cell = 0, cstar = 1,
                        solid = 0.8, cex = 3, clab = 1)
 load_dpca2 <- as.data.frame(dapc2$var.contr)
-write.table(load_dpca2, "PopGen/Loadings_SNPs.txt", sep="\t", row.names=FALSE, quote=FALSE)
+write.table(load_dpca2, "Loadings_SNPs.txt", sep="\t", row.names=FALSE, quote=FALSE)
 percent= dapc2$eig/sum(dapc2$eig)*100
-barplot(percent, ylab="Percent of genetic variance explained by eigenvectors", names.arg=round(percent,2))
+barplot(percent, main = "Percent of genetic variance explained by eigenvectors", ylim = c(0, max(percent) + 10), names.arg = paste0("E", c(1:length(percent))), ylab = "Percent", xlab = "Eigenvector")
 dapc_prior=as.data.frame(dapc2$ind.coord)
-write.table(dapc_prior, "PopGen/DCPA_prior_results.txt", quote=F, sep="\t", row.names=TRUE)
+write.table(dapc_prior, "DAPC_prior_results.txt", quote=F, sep="\t", row.names=TRUE)
 
 ### Add information to the tab results of the DPCA
 dapc_prior$IND <- row.names(dapc_prior)
 
 ### Add site info
-dapc_prior$SITE <- substr(dapc_prior$IND, 1,2)
+dapc_prior$SITE <- substr(dapc_prior$IND, 1,2) #Again, assumes the site is the first two characters of the individual names
 
 ### Add 'region' info:
-dapc_prior<-merge(dapc_prior, region, by.x = "SITE", by.y = "Population")
+dapc_prior <- merge(dapc_prior, region, by.x = "SITE", by.y = "Population")
 
 ### Make a ggplot graph representing the DAPC for the first and second axes for the regions
-uro_pal<-get_palette(palette = "Paired", k = 15)
-region_pal<-wes_palette("Royal1",n = 3)
 ggscatter(dapc_prior, x = "LD1", y = "LD2", shape = 21, fill = "SITE", size = 3,
-          xlab = "DA1 (30.9%)", ylab = "DA2 (29.9%)", palette = uro_pal)
-#ggscatter(dapc_prior, x = "LD1", y = "LD2", shape = 21, fill = "Region", size = 4,
-#          xlab = "DA1 (30.9%)", ylab = "DA2 (29.9%)", palette = region_pal)
+          xlab = "DA1 (30.9%)", ylab = "DA2 (29.9%)", palette = pop_cols)
 
 ### Save the ggplot graph
-ggsave("PopGen/DPCA_prior_UroM1n6_scen1.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
+ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
 
 ```
 
@@ -310,6 +288,33 @@ ggsave("PopGen/DPCA_prior_UroM1n6_scen1.pdf",width=12,height=10,dpi=600,units="c
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+###Extra code - not needed now but could be helpful later
+```{r}
+#Change plot window to make it easier to visualize trends as # of PCs increases.
+par(mfrow = c(2,2))
+#find clusters
+# k <- find.clusters(Alewife.genlight, scale = FALSE)
+#Loop over different numbers of PCs and plot k vs BIC
+#Values originally 15-100, changed to 1-50
+for(i in seq(1, 50, by = 5)){
+  var <- paste0("k.",i,".PCs") #Make name to save output
+  k <- find.clusters(genlight, scale = FALSE, n.pca = i, choose.n.clust = FALSE, criterion = "diffNgroup") #run main function
+  plot(k$Kstat, type = "b", col = "blue", main = paste0("PCs = ", i), ylab = "BIC", xlab = "k value") #Plot results
+  assign(var, k) #Save output
+}
+```
 
 ## Genetic structure
 Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
@@ -357,7 +362,6 @@ q
 
 ## Calculate heterozygosity and FIS
 **This section needs some work. Giving NAs for some populations for Hobs. Also takes a long time to run. Gotta be a better way to do this ... think I can just use a tidy dataframe and a custom function.**
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
 ```{r, echo=FALSE}
 tidy.vcf <- vcfR2tidy(in_vcf)
 tidy.gt <- tidy.vcf$gt %>% left_join(popmap, by = "Indiv")
@@ -405,46 +409,6 @@ Fis.df <- cbind(gendivstats[,c(1,5)],Fis.df)
 as_tibble(Fis.df)
 ```
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
-### Visualize heterozygosity
-```{r}
-pobs <- ggplot(gendivstats, aes(x = factor(Pop), y = Hobs.pop, color = Pop))
-pobs <- pobs + geom_point(size = 3)
-pobs <- pobs + scale_color_manual(values = pop_cols)
-pobs <- pobs + labs(title = "Population level observed heterozygosity", 
-         x = "Population", y = "Observed het")
-pobs <- pobs + theme_classic()
-pobs <- pobs + theme(axis.text.x = element_text(angle=45, hjust=1))
-pexp <- ggplot(gendivstats, aes(x = factor(Pop), y = Hexp.pop, color = Pop))
-pexp <- pexp + geom_point(size = 3)
-pexp <- pexp + scale_color_manual(values = pop_cols) 
-pexp <- pexp + labs(title = "Population level expected heterozygosity", 
-         x = "Population", y = "Expected het")
-pexp <- pexp + theme_classic()
-pexp <- pexp + theme(axis.text.x = element_text(angle=45, hjust=1))
-pfis <- ggplot(gendivstats, aes(x = factor(Pop), y = as.numeric(format(FIS, scientific = F)), color = Pop)) 
-pfis <- pfis + geom_abline(slope = 0, color = "gray")  
-pfis <- pfis + geom_point(size = 3) 
-pfis <- pfis + scale_color_manual(values = pop_cols) 
-pfis <- pfis + labs(title = "Population level inbreeding coefficient", 
-         x = "Population", y = "FIS")
-pfis <- pfis + theme_classic()
-pfis <- pfis + theme(axis.text.x = element_text(angle=45, hjust=1))
-pobs
-pexp
-pfis
-```
-<<<<<<< HEAD
-## Genetic distance between locality and year combos. This is FST but can easily change
-```{r, echo = FALSE}
-pop.fst <- genet.dist(Alewife.genind, method = "WC84")
-pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
-pop.fst.df
-# write.csv(pop.fst.df,"RH_M3_fst.csv")
-```
 
 ## Genetic structure
 Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
@@ -476,78 +440,5 @@ for (i in 1:length(lfiles)){
   k.df$Marginal_Likelihood[i] <- 
     as.numeric(str_sub(grep("Marginal Likelihood = ", 
                             readLines(lfiles[[i]],),value = TRUE),-13))
-=======
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-###Extra code - not needed now but could be helpful later
-```{r}
-#Change plot window to make it easier to visualize trends as # of PCs increases.
-par(mfrow = c(2,2))
-#find clusters
-# k <- find.clusters(Alewife.genlight, scale = FALSE)
-#Loop over different numbers of PCs and plot k vs BIC
-#Values originally 15-100, changed to 1-50
-for(i in seq(1, 50, by = 5)){
-  var <- paste0("k.",i,".PCs") #Make name to save output
-  k <- find.clusters(genlight, scale = FALSE, n.pca = i, choose.n.clust = FALSE, criterion = "diffNgroup") #run main function
-  plot(k$Kstat, type = "b", col = "blue", main = paste0("PCs = ", i), ylab = "BIC", xlab = "k value") #Plot results
-  assign(var, k) #Save output
->>>>>>> 42d684c33e35ae838a61ecf2b5856bec74efb5e7
 }
 ```
-
-### Run DAPC analysis to find optimal number of PCs
-If scale is set to TRUE, then uninformative alleles may be given more weight
-Set number of PCs to highest number of PCs that returns a reasonable k vs BIC plot. Select a k value that you think reasonably represents the data
-```{r}
-#Change plot window back to default
-par(mfrow = c(1,1))
-PCs <- 50
-clust <- 2
-k <- find.clusters(Alewife.genlight, scale = FALSE, n.pca = PCs, n.clust = clust)
-#Run DAPC using clusters and PCs specified above
-#First time: copy and paste this line into the console--interactive:
-#dapc1 <- dapc(genlight, k$grp, n.pca = PCs)
-dapc1 <- dapc(genlight, k$grp, n.pca = PCs, n.da = 1)
-#Optimize a score to find the number of PCs that minimizes false assignment
-optim_a <- optim.a.score(dapc1)
-k2 <- find.clusters(Alewife.genlight, scale = FALSE, n.pca = optim_a$best, n.clust = clust)
-#First time: copy and paste this line into the console--interactive:
-#dapc2 <- dapc(genlight, k2$grp, n.pca = optim_a$best)
-dapc2 <- dapc(genlight, k2$grp, n.pca = optim_a$best, n.da = 1)
-#a <- a.score(dapc1) #Look at a scores
-#Plot results - change colors because Blair made fun of me
-scatter.dapc(dapc2, pch = 19)
-```
-
