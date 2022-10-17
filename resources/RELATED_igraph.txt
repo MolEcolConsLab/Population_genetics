@@ -1,0 +1,147 @@
+### I'm gonig to start with my pairwise relatedness values from RELATED and make an igraph network from that.
+
+### This is what the output from RELATED looks like...
+
+g_pw_output$relatedness[which(g_pw_output$relatedness$ind1.id=="HH_190812" & g_pw_output$relatedness$ind2.id %in% paste0("HH_", simple_meta$V1[which(simple_meta$V4=="Apua7")])),c(1:4,6,8)]
+
+     pair.no   ind1.id   ind2.id group    wang lynchrd
+6310    6310 HH_190812 HH_191694  HHHH  0.2439  0.1185
+6311    6311 HH_190812 HH_191695  HHHH  0.2546  0.1767
+6312    6312 HH_190812 HH_191696  HHHH  0.3498  0.2282
+6313    6313 HH_190812 HH_191700  HHHH  0.2309  0.0931
+6314    6314 HH_190812 HH_191703  HHHH  0.3571  0.2488
+
+### make a new object that is easier to work with...
+
+rit.rel <- g_pw_output$relatedness[, c(2:3,8)]
+
+> head(rit.rel)
+
+  ind1.id ind2.id lynchrd
+1  D00009  D00005  0.0702
+2  D00009  D00003  0.0057
+3  D00009  D00007 -0.0545
+4  D00009  D00011 -0.0667
+5  D00009  D00004 -0.0621
+6  D00009  D00008  0.0239
+
+### We now need to invert the relatedness values because the edge lengths are 1 - r.
+
+rit.rel2 <- rit.rel
+
+rit.rel2$lynchrd <- 1 - lynchrd
+
+cbind.data.frame(head(rit.rel$lynchrd),head(rit.rel2$lynchrd))
+  head(rit.rel$lynchrd) head(rit.rel2$lynchrd)
+1                0.0702                 0.9298
+2                0.0057                 0.9943
+3               -0.0545                 1.0000
+4               -0.0667                 1.0000
+
+### For some reason all negative values were converted to 1. That's ok
+
+### I want to delet some comparisons to make the graph less messy. I want to remove all the 1.0000 but keep the ones that connect breeding pairs
+
+### here are the pairwise r values for breeding pairs
+
+rit.rel2[which(rit.rel2$ind1.id=="D00001" & ind2.id=="M00001"),]
+    ind1.id ind2.id lynchrd
+207  D00001  M00001   0.749
+rit.rel2[which(rit.rel2$ind1.id=="D00002" & ind2.id=="190814"),]
+    ind1.id ind2.id lynchrd
+214  D00002  190814  0.8639
+rit.rel2[which(rit.rel2$ind1.id=="D00003" & ind2.id=="190815"),]
+   ind1.id ind2.id lynchrd
+62  D00003  190815  0.7528
+rit.rel2[which(rit.rel2$ind1.id=="D00004" & ind2.id=="190813"),]
+    ind1.id ind2.id lynchrd
+118  D00004  190813  0.8508
+rit.rel2[which(rit.rel2$ind1.id=="D00005" & ind2.id=="190816"),]
+   ind1.id ind2.id lynchrd
+41  D00005  190816  0.9099
+rit.rel2[which(rit.rel2$ind1.id=="D00006" & ind2.id=="M00002"),]
+    ind1.id ind2.id lynchrd
+192  D00006  M00002  0.7108
+rit.rel2[which(rit.rel2$ind1.id=="D00007" & ind2.id=="M00003"),]
+   ind1.id ind2.id lynchrd
+90  D00007  M00003  0.9299
+rit.rel2[which(rit.rel2$ind1.id=="D00007" & ind2.id=="190823"),]
+   ind1.id ind2.id lynchrd
+86  D00007  190823  0.7207
+rit.rel2[which(rit.rel2$ind1.id=="D00008" & ind2.id=="190820B"),]
+    ind1.id ind2.id lynchrd
+138  D00008 190820B  0.7272
+rit.rel2[which(rit.rel2$ind1.id=="D00009" & ind2.id=="190824"),]
+   ind1.id ind2.id lynchrd
+19  D00009  190824       1
+rit.rel2[which(rit.rel2$ind1.id=="D00010" & ind2.id=="190825"),]
+    ind1.id ind2.id lynchrd
+154  D00010  190825  0.9997
+rit.rel2[which(rit.rel2$ind1.id=="D00011" & ind2.id=="190821"),]
+   ind1.id ind2.id lynchrd
+98  D00011  190821       1
+rit.rel2[which(rit.rel2$ind1.id=="D00012" & ind2.id=="190817"),]
+    ind1.id ind2.id lynchrd
+179  D00012  190817       1
+
+too_big_rel <- which(rit.rel2$lynchrd >= 1)          ### make a vector of all (1 - r) values >= 1. 
+too_big_rel <- too_big_rel[-which(too_big_rel %in% c(19,98,179))]    ### exclude the breeding pairs with (1 - r) == 1.
+                                                                     ### 19, 98, and 179 are the row indices as seen above.
+																	 ### notice that I am negating here with the "-" opperator
+
+rit.rel3 <- rit.rel2[-too_big_rel,]. ### and here too
+
+dim(rit.rel2)
+[1] 300   3
+dim(rit.rel3)
+[1] 89  3             ### good
+
+vert_names <- unique(c(rit.rel3$ind1.id, rit.rel3$ind2.id))
+
+library(igraph)
+
+net <- graph_from_data_frame(d=rit.rel3, vertices=vert_names, directed=F)
+
+### add some attributes
+V(net)$label <- c("P09","P05","P03","P07","P11","P04","P08","P10","P12","P06","P01","P02","M071","154","M152","M110","M155","M158","M157","M151","M119","M085","M159","M076","M153")
+V(net)$size <- 8
+V(net)$color <- c("green","green","orange","green","green","orange","pink","green","green","orange","orange","orange","green","orange","green","pink","orange","orange","green","green","green","orange","green","green","orange")
+V(net)$shape <- c("square","square","square","square","square","square","square","square","square","square","square","square","circle","circle","circle","circle","circle","circle","circle","circle","circle","circle","circle","circle","circle")
+
+### I also want to show the mating pairs by highlighting the edges between these individuals.
+
+ecolor <-c(rep("gray", 89))
+ewidth <- c(rep(1,89))
+
+### To match the edges in the vector you need to use E(net) to see what pairs have what edges
+
+ecolor[60] <- "black"
+ewidth[60] <- 3
+ecolor[62] <- "black"
+ewidth[62] <- 3
+ecolor[21] <- "black"
+ewidth[21] <- 3
+ecolor[37] <- "black"
+ewidth[37] <- 3
+ecolor[17] <- "black"
+ewidth[17] <- 3
+ecolor[55] <- "black"
+ewidth[55] <- 3
+ecolor[31] <- "black"
+ewidth[31] <- 3
+ecolor[30] <- "black"
+ewidth[30] <- 3
+ecolor[40] <- "black"
+ewidth[40] <- 3
+ecolor[8] <- "black"
+ewidth[8] <- 3
+ecolor[43] <- "black"
+ewidth[43] <- 3
+ecolor[33] <- "black"
+ewidth[33] <- 3
+ecolor[49] <- "black"
+ewidth[49] <- 3
+
+plot(net, edge.color=ecolor,layout=layout_with_mds, edge.width=ewidth, axes=T)
+legend(x=0.75, y=-0.5, c("Paternal genotypes","Nesting mothers"), pch=c(0,1))
+legend(x=1.0, y=0.5, c("Pohue","Apua", "Kamehame"), pch=1, fill=c("green","orange","pink"))

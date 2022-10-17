@@ -133,7 +133,7 @@ ggplot(data = melted, aes(Var2, Var1, fill = value))+ geom_tile(color = "white")
 
 ## Isolation-by-distance model
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
-# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude
+# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude. We assume this is a csv (comma-separate) file.
 region <- read.csv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/03_PopGen/uro_regions.csv", header = T)
 
 #Tibbles will only show a couple sig digits for lat and long, but the full coordinates are stored.
@@ -150,7 +150,6 @@ all_latlon <- popmap.filtered %>% left_join(latlon, by = "STRATA") %>%
 latlon <- all_latlon[,2:3]
 genlight@other$latlong<-latlon
 gl.ibd(genlight)
-
 ```
 
 
@@ -265,7 +264,7 @@ dapc_prior <- merge(dapc_prior, region, by.x = "SITE", by.y = "Population")
 
 ### Make a ggplot graph representing the DAPC for the first and second axes for the regions
 ggscatter(dapc_prior, x = "LD1", y = "LD2", shape = 21, fill = "SITE", size = 3,
-          xlab = "DA1 (30.9%)", ylab = "DA2 (29.9%)", palette = pop_cols)
+          xlab = "DA1", ylab = "DA2", palette = pop_cols)
 
 ### Save the ggplot graph
 ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
@@ -273,8 +272,48 @@ ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
 ```
 
 
-## Relatedness
+## END MAIN SCRIPT
 
+
+
+
+
+
+
+
+### Still working on this ...
+## Relatedness
+```{r}
+#install.packages("related", repos="http://R-Forge.R-project.org") #Install package 'related'
+library(related)
+help(related)
+
+#Need a tidy dataframe in wide format. First column is individual name, then the rest of the columns identify the alleles.
+vcf.tidy <- vcfR2tidy(in_vcf)
+gt.tidy <- vcf.tidy$gt
+
+related.df1 <- gt.tidy %>% mutate(locus = paste0(ChromKey, "_", POS)) %>%
+  dplyr::select(Indiv, locus, gt_GT) %>%  
+  pivot_wider(names_from = locus, 
+              values_from = gt_GT) %>% 
+  column_to_rownames(var = "Indiv")
+  
+related.df2 <- related.df1 %>% cSplit(splitCols = names(related.df1), sep = "/")
+  
+  
+  separate(sep = "/", convert = TRUE)
+
+
+  mutate(allele_A.orig = as.numeric(allele_A.orig),
+         allele_B.orig = as.numeric(allele_B.orig)) %>% 
+  mutate(allele_A.new = allele_A.orig + 1, 
+         allele_B.new = allele_B.orig + 1) %>%
+  dplyr::select(Indiv, locus1, locus2, allele_A.new, allele_B.new) %>%  
+  pivot_wider(names_from = c(locus1, locus2), values_from = c(allele_A.new, allele_B.new))
+
+
+coancestry(related.df, quellergt=1)
+```
 
 
 
