@@ -30,16 +30,16 @@ library(reshape2)
 Note that the population map should be two columns: sample ID and linked population.
 ```{r, echo = FALSE}
 #Read in VCF file
-in_vcf <- read.vcfR("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/UroFull_M1n6_filtered.vcf", convertNA = T)
+in_vcf <- read.vcfR("", convertNA = T)
 
 #Convert vcf to genlight
 genlight.orig <- vcfR2genlight(in_vcf)
 
 #Read in white list of individuals. This should be a text file with a single column containing the names of the individuals that were retained after filtering.
-whitelist.indvs <- read.delim("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/Whitelist_indivs.txt", header = F) %>% pull()
+whitelist.indvs <- read.delim("", header = F) %>% pull()
 
 #Read in the population map. This should be a two-column tab-delimited text file where the first column contains the name of each individual sample and the second column contains the population. This can be the same as the population map used in Stacks.
-popmap.orig <- read_tsv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/popmap_full.txt", col_names = F) %>% 
+popmap.orig <- read_tsv("", col_names = F) %>% 
   dplyr::rename(Indiv = X1, STRATA = X2)
 
 
@@ -134,7 +134,7 @@ ggplot(data = melted, aes(Var2, Var1, fill = value))+ geom_tile(color = "white")
 ### Isolation-by-distance model
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 # Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude
-region <- read.csv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/03_PopGen/uro_regions.csv", header = T)
+region <- read.csv("", header = T)
 
 #Tibbles will only show a couple sig digits for lat and long, but the full coordinates are stored.
 latlon <- as.data.frame(cbind(region$Population,
