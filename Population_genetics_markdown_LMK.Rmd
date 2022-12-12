@@ -1,0 +1,529 @@
+---
+title: "Population genetics"
+author: "MEC Lab"
+date: '2022-08-26'
+output: html_document
+---
+Next steps (following convo on 12/12/2022)
+1. Clean up code that's already here
+2. Get code from Blair for Admixture and Structure
+3. Circle back to relatedness
+  a. Relatedness probably doesn't need to be in this - we can probably put in the separate kinship script.
+
+
+JDS: For more notes, see RA tab in OneNote
+Categories:
+Start with a little blurb saying, "This assumes that you did x, y, and z upstream".
+Initial data QC (check out strataG tutorial that Lisa sent me)
+	- Duplicates
+	- See https://github.com/lkomoro/Pop-Genomics/blob/master/strataG_new_user_guide.docx
+		- Don't worry about LD right now in terms of running for each population (as suggested in the link above)
+		- There are scripts corresponding to the coming soon: section at the end of the strataG word doc above in the MEC lab github, maybe green turtles.
+
+Ordination
+	- PCA 
+	- DAPC
+
+Differentiation
+	- Fst, Gst, etc (maybe via strataG, which can run all)
+		function overallTest(Msat.g, stats = "all", nrep = 100, write.output=FALSE)
+		also function pairwiseTest(Msat.g, stats = c("fst"), nrep = 50, write.output=FALSE) 
+	- Population genetic distance
+	- Individual genetic distance (relatedness)
+		Any other kinship stuff would probably be in a separate repo
+	- Structure, fineRADstructure, etc
+
+Diversity metrics
+	- Heterozygosity (mayyyyybe FIS)
+	
+FastStructure/Admixture
+	check in with Blair
+	try to run structure via strataG
+
+
+JDS: Include two sentences about what is the purpose of this script. "In this script, we've included code to run the basics if we have a population genetics SNP set that is downstream of filters." We want to run this for most things, but not everything.
+
+
+LMK to JDS: might be good to add the code to install the required packages if the users dont have them? And particularly note if any of these need versions that need to be installed from sources other than CRAN (eg github). Since I have a new laptop I'm having to reinstall everything, so I've noted below where things had issues
+
+JDS: Include installation instructions
+## Load packages
+```{r, warning=FALSE, echo = FALSE}
+library(tidyverse)
+library(dartR) #this calls SNPrelate as a dependency, which seems to have been taken off CRAN
+library(poppr)
+library(vcfR)
+library(adegenet)
+library(hierfstat)
+library(pophelper)#not on CRAN
+library(gridExtra)
+library(ggpubr)
+library(strataG)#not on CRAN
+library(mapdata)
+library(viridis)
+library(poppr)#duplicate, listed above?
+library(wesanderson)
+library(ape)
+library(reshape2)
+```
+
+
+## Read in data and create genind object with populations
+Note that the population map should be two columns: sample ID and linked population.
+LMK to JDS: (1) here add a sentences explaining what the purpose of this chunk is? (2) it might be helpful if we put up example files for the input to show what they should look like/format? The descriptions below are very helpful.
+
+JDS: Look into "here" package. Set up something that can make it easier to change paths. Sometimes this package breaks; if I figure out why, let Lisa know. Can also do what I did with CKMR scripts (specify an object, then use paste0)
+
+JDS: Check for an external doc with explanations (e.g. HackMD) of why we're doing what we're doing. Did I put one of these together already? If so, link to it here; if not, then write one up - can be external (HackMD) or here.
+
+JDS: Include a toy dataset so people can run that dataset through here as an example/vignette (maybe two populations of snails? or cownose ray POPs?).
+```{r, echo = FALSE}
+#Read in VCF file
+in_vcf <- read.vcfR("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/UroFull_M1n6_filtered.vcf", convertNA = T)
+
+#Convert vcf to genlight. Save twice: genlight.orig will be preserved if samples are subset and the genlight object will be replaced; if no subsetting is needed, then the file named genlight will be used throughout the rest of the script. 
+genlight.orig = genlight <- vcfR2genlight(in_vcf)
+
+#Read in white list of individuals. This should be a text file with a single column containing the names of the individuals that were retained after filtering.
+whitelist.indvs <- read.delim("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/Whitelist_indivs.txt", header = F) %>% pull()
+
+#Read in the population map. This should be a two-column tab-delimited text file where the first column contains the name of each individual sample and the second column contains the population. This can be the same as the population map used in Stacks.
+popmap.orig <- read_tsv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/popmap_full.txt", col_names = F) %>% 
+  dplyr::rename(Indiv = X1, STRATA = X2)
+
+
+#-------------------Subset the full set of samples for analysis------------------------
+#Only run this section if you want to run the analysis on a subset of individuals included in the filtered VCF file. If you want to run on all the samples in the vcf file that was loaded, then skip this section and move on to "Finish creating genlight and genind objects" a few lines below.
+
+#Create a blacklist of individuals that we don't want to include in the analysis so we can drop them from the genlight object
+blacklist.indvs <- popmap.orig %>% dplyr::filter(!Indiv %in% whitelist.indvs) %>% 
+  pull(Indiv)
+
+#To drop blacklisted individuals. Note that this will not run if the blacklist solely includes individuals that were already filtered.
+genlight <- gl.drop.ind(genlight.orig, ind.list = blacklist.indvs, mono.rm = TRUE)
+
+
+#-------------------Finish creating genlight and genind objects--------------------------
+# Filter the population map for whitelisted individuals i.e. those we will keep for the population genetics analysis.
+popmap.filtered <- tibble(Indiv = genlight@ind.names) %>% left_join(popmap.orig, by = "Indiv")
+
+genlight@pop <- as.factor(popmap.filtered$STRATA)
+genind <- gl2gi(genlight) # need genind format for some functions
+genind@pop <- factor(popmap.filtered$STRATA)
+summary(genlight@pop)
+summary(genind@pop)
+```
+
+
+JDS: PCA doesn't necessarily need to come first. Maybe do duplicate checks first, maybe diversity metrics (heterozygosity, FsT, etc). Include a better description of what the purpose of PCA is.
+Go back to strataG and look at the tutorial (which apparently I got real excited about before). We don't ned to use strataG, but we probably want to follow something similar.
+
+With things like IBD, we want to specify that it depends on the hypothesis. This can be a break in the script (e.g. common thigns above, specific thigns below).
+
+## PCA 
+Proportion of variation explained by PCA axes
+```{r, echo = FALSE}
+pca1 <- glPca(genlight,center = T, scale = T, nf = 5)
+barplot(100*pca1$eig/sum(pca1$eig), col = heat.colors(50), main="PCA Eigenvalues") # retain first 5 axes, incremental decrease after 2
+title(ylab="Percent of variance\nexplained", line = 2)
+title(xlab="Eigenvalues", line = 1)
+
+#proportion of explained variance by first three axes
+a1<-pca1$eig[1]/sum(pca1$eig) # proportion of variation explained by 1st axis
+a2<-pca1$eig[2]/sum(pca1$eig) # proportion of variation explained by 2nd axis 
+a3<-pca1$eig[3]/sum(pca1$eig) # proportion of variation explained by 3rd axis
+pcvar <- data.frame(Axis = c(1:3), Proportion = c(a1,a2,a3))
+pcvar
+```
+
+
+### Generate PCA plots
+```{r, fig.width = 6,fig.height = 6, echo = FALSE}
+# Extract PC scores to color by location/yr:
+# Adapted from https://github.com/grunwaldlab/Population_Genetics_in_R/blob/master/gbs_analysis.Rmd#principal-components-analysis
+                                    
+pca1.scores <- as.data.frame(pca1$scores)
+pca1.scores$pop <- pop(genlight)
+pca1.scores$reg <- pca1.scores$pop
+
+#Make PCA plots
+set.seed(9)
+num_pops <- length(levels(factor(popmap.filtered$STRATA)))
+pop_cols <- get_palette(k = num_pops, palette = "Set1")
+
+# plot PC 1 and 2
+ggscatter(pca1.scores, x = "PC1", y = "PC2", shape = "pop", color = "pop",
+          palette = pop_cols, ellipse = T, ellipse.level = 0.95,
+          xlab = paste0("PC1 (",round(pcvar[1,2]*100,2),"%)"),
+          ylab = paste0("PC2 (",round(pcvar[2,2]*100,2),"%)"))
+
+# #plot  PC 2 and 3: not informative for this dataset
+ggscatter(pca1.scores, x = "PC2", y = "PC3", shape = "pop", color = "pop",
+          palette = pop_cols, ellipse = T, ellipse.level = 0.95,
+          xlab = paste0("PC2 (",round(pcvar[2,2]*100,2),"%)"),
+          ylab = paste0("PC3 (",round(pcvar[3,2]*100,2),"%)"))
+# ggsave("p12.pdf", width = 7, height=7)
+```
+
+## Genetic Diversity and FST
+Recommend running the pair-wise FST estimate ONCE, then writing a file to read in for next steps to avoid ~20 min run times each time the chunk is run.
+```{r, echo = FALSE}
+#Calculate pairwise FST
+pop.fst <- genet.dist(genind, method = "WC84") # Run time ~20 mins
+pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
+pop.fst.df #Look at matrix of Fst values
+write.csv(pop.fst.df,"fileName.csv")
+#pop.fst.df<-read.csv(file="fileName.csv", header = T)
+
+#Format Fst dataframe
+pop.fst.tri <- pop.fst.df
+pop.fst.tri[lower.tri(pop.fst.df, diag=TRUE)] <- NA
+fst.mat = data.matrix(pop.fst.tri)
+melted <- melt(fst.mat, na.rm =TRUE)
+
+#Plot heatmap of Fst among populations
+ggplot(data = melted, aes(Var2, Var1, fill = value))+ geom_tile(color = "white")+ scale_fill_gradient(low = "white", high = "navy", name="FST")  + ggtitle(expression(atop("Pairwise FST, WC (1984)", atop(italic("N = 113, L = 4200"), ""))))+labs( x = "Sampling Site", y = "Sampling Site") + theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),axis.text.y = element_text(size = 12)) + coord_fixed()
+```
+
+## Isolation-by-distance model
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude. We assume this is a csv (comma-separate) file.
+region <- read.csv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/03_PopGen/uro_regions.csv", header = T)
+
+#Tibbles will only show a couple sig digits for lat and long, but the full coordinates are stored.
+latlon <- as.data.frame(cbind(region$Population,
+                            region$lat,
+                            region$lon)) %>% 
+  dplyr::rename(STRATA = V1, lat = V2, lon = V3) %>% 
+    mutate(lat = as.numeric(lat), lon = as.numeric(lon))
+
+#Replicate the coordinates for each sample
+all_latlon <- popmap.filtered %>% left_join(latlon, by = "STRATA") %>% 
+  dplyr::select(-Indiv)
+
+latlon <- all_latlon[,2:3]
+genlight@other$latlong<-latlon
+gl.ibd(genlight)
+```
+
+
+## Heterozygosity
+```{r}
+het<-as.data.frame(t(genind@tab))
+hetl<-list()
+for(q in 1:ncol(het)){
+  df<-as.data.frame(het[,q])
+  sample<-colnames(het)[q]
+  df<-as.data.frame(df[!is.na(df),])
+  df2<-as.data.frame(df[df$`df[!is.na(df), ]` == 1,])
+  nHet<-nrow(df2)
+  nTot<-nrow(df)
+  hTot<-nHet/nTot
+  hdf<-as.data.frame(cbind(sample, hTot))
+  hdf$pop<-substr(hdf$sample, 1, 2)
+  hetl[[q]]<-hdf
+}
+hetdf<-do.call(rbind, hetl)
+hetdf$hTot<-as.numeric(hetdf$hTot)
+
+ggscatter(hetdf, x = "pop", y = "hTot", color = "pop", palette = pop_cols,
+          xlab = "Population", ylab = "Heterozygosity", legend = "none") +
+  font("xlab", face = "bold") + font("ylab", face = "bold")
+```
+
+
+## DAPC 
+JDS: move DAPC up to just below PCA.
+
+### Step 1: Run DAPC without any prior information
+The chunk here is to determine the optimal value of K (clusters) to use for downstream analyses using k-means clustering. As per the documenttaion from `find.clusters`:
+
+"The rule of thumb consists in increasing K until it no longer leads to an appreciable improvement of fit (i.e., to a decrease of BIC). In the most simple models (island models), BIC decreases until it reaches the optimal K, and then increases. In these cases, our rule amounts to choosing the lowest K. In other models such as stepping stones, the decrease of BIC often continues after the optimal K, but is much less steep."
+```{r, echo=TRUE}
+n_individuals <- nrow(popmap.filtered)
+n_pops <- length(levels(factor(popmap.filtered$STRATA)))
+
+grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200,
+                         choose.n.clust = FALSE)
+
+BIC<-as.data.frame(cbind(seq(1,n_pops,1), grp_all$Kstat))
+
+ggline(BIC, x = "V1", y = "V2", plot_type = "b",
+       col = "navy",
+       xlab = "Number of clusters (K)",
+       ylab = "BIC Value",
+       title = "Selection of optimum number of clusters (K)") + font("xlab", face = "bold") + font("ylab", face = "bold")
+grp_all$Kstat
+
+```
+
+
+### Step 2: Based on the output of the plot above, we select the optimal value of K and observe the number of samples per cluster. Set k to the value with the lowest BIC score.
+```{r, echo=TRUE}
+k <- 5
+grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200, n.clust = k)
+grp_all$size
+```
+
+### Step 3: Run DAPC and generate the plots for visualizing
+Selecting the right number of DAs is important as it impacts the downstream outputs, and too many PCs can lead to over-fitting the data.
+```{r}
+n.da <- 5 #Set number of DAs
+dapc <- dapc(genind, grp_all$grp, n.pca=60, n.da = n.da, var.contrib = TRUE)
+pal <- get_palette("Accent", k = k)
+dpca_result <- scatter(dapc, col=pal, scree.pca = TRUE,
+                       pch = 20, cell = 0, cstar = 1,
+                       solid = 0.8, cex = 3, clab = 1)
+set.seed(4)
+#contrib<-loadingplot(dapc$var.contr,axis=2, thres=.002,lab.jitter=1)
+compoplot(dapc, posi="topleft", txt.leg=paste("Cluster",c(1:k)),
+          ncol=1, xlab="Individuals", col=pal, lab=genind@pop, show.lab = T)
+
+dapc$IND <- row.names(dapc$ind.coord)
+
+dapc_info <- as.data.frame(cbind(dapc$IND, dapc$ind.coord, grp_all$grp))
+
+colnames(dapc_info) <- c("IND","DPC1", "DPC2", "DPC3", "DPC4", "DPC5", "K")
+colnames(dapc_info) <- c("IND", c(paste0("DPC", 1:(n.da-1))), "K")
+dapc_info$SITE <- substr(dapc_info$IND, 1,2) #Takes first two letters of the Indv name and adds to the columns "SITE"
+dapc_info
+```
+
+### Step 4: Now use results from the first DAPC to inform a secondary DAPC
+
+**JDS Q for Blair:** Why are we calling this a prior? Aren't we just empirically determining the best number of PCs to retain for DAPC?
+```{r, echo=TRUE}
+set.seed(5); dapc_a_score <- dapc(genind, n.pca=100, n.da=n.da) 
+temp_score <- optim.a.score(dapc_a_score) #Determine best number of PCs to retain for DAPC analysis
+n.pc <- temp_score$best #Save best number of PCs
+dapc2 <-dapc(genind,genind@pop, n.pca = n.pc, n.da = n.da)
+dapc2$IND <- row.names(dapc2$ind.coord)
+dapc2_info <- as.data.frame(cbind(dapc2$IND, dapc2$ind.coord, grp_all$grp))
+
+dpca_result <- scatter(dapc2, col=pal, scree.pca = TRUE,
+                       pch = 20, cell = 0, cstar = 1,
+                       solid = 0.8, cex = 3, clab = 1)
+load_dpca2 <- as.data.frame(dapc2$var.contr)
+write.table(load_dpca2, "Loadings_SNPs.txt", sep="\t", row.names=FALSE, quote=FALSE)
+percent= dapc2$eig/sum(dapc2$eig)*100
+barplot(percent, main = "Percent of genetic variance explained by eigenvectors", ylim = c(0, max(percent) + 10), names.arg = paste0("E", c(1:length(percent))), ylab = "Percent", xlab = "Eigenvector")
+dapc_prior=as.data.frame(dapc2$ind.coord)
+write.table(dapc_prior, "DAPC_prior_results.txt", quote=F, sep="\t", row.names=TRUE)
+
+### Add information to the tab results of the DPCA
+dapc_prior$IND <- row.names(dapc_prior)
+
+### Add site info
+dapc_prior$SITE <- substr(dapc_prior$IND, 1,2) #Again, assumes the site is the first two characters of the individual names
+
+### Add 'region' info:
+dapc_prior <- merge(dapc_prior, region, by.x = "SITE", by.y = "Population")
+
+### Make a ggplot graph representing the DAPC for the first and second axes for the regions
+ggscatter(dapc_prior, x = "LD1", y = "LD2", shape = 21, fill = "SITE", size = 3,
+          xlab = "DA1", ylab = "DA2", palette = pop_cols)
+
+### Save the ggplot graph
+ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
+
+```
+
+JDS: we want to add Structure to the script as well. We can potentially call Structure via strataG. Check in with Blair about Structure and whether he has scripts.
+
+## END MAIN SCRIPT
+
+
+
+
+
+
+
+
+### Still working on this ...
+## Relatedness
+```{r}
+#install.packages("related", repos="http://R-Forge.R-project.org") #Install package 'related'
+library(related)
+help(related)
+
+#Need a tidy dataframe in wide format. First column is individual name, then the rest of the columns identify the alleles.
+vcf.tidy <- vcfR2tidy(in_vcf)
+gt.tidy <- vcf.tidy$gt
+
+related.df1 <- gt.tidy %>% mutate(locus = paste0(ChromKey, "_", POS)) %>%
+  dplyr::select(Indiv, locus, gt_GT) %>%  
+  pivot_wider(names_from = locus, 
+              values_from = gt_GT) %>% 
+  column_to_rownames(var = "Indiv")
+  
+related.df2 <- related.df1 %>% cSplit(splitCols = names(related.df1), sep = "/")
+  
+  
+  separate(sep = "/", convert = TRUE)
+
+
+  mutate(allele_A.orig = as.numeric(allele_A.orig),
+         allele_B.orig = as.numeric(allele_B.orig)) %>% 
+  mutate(allele_A.new = allele_A.orig + 1, 
+         allele_B.new = allele_B.orig + 1) %>%
+  dplyr::select(Indiv, locus1, locus2, allele_A.new, allele_B.new) %>%  
+  pivot_wider(names_from = c(locus1, locus2), values_from = c(allele_A.new, allele_B.new))
+
+
+coancestry(related.df, quellergt=1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+###Extra code - not needed now but could be helpful later
+```{r}
+#Change plot window to make it easier to visualize trends as # of PCs increases.
+par(mfrow = c(2,2))
+#find clusters
+# k <- find.clusters(Alewife.genlight, scale = FALSE)
+#Loop over different numbers of PCs and plot k vs BIC
+#Values originally 15-100, changed to 1-50
+for(i in seq(1, 50, by = 5)){
+  var <- paste0("k.",i,".PCs") #Make name to save output
+  k <- find.clusters(genlight, scale = FALSE, n.pca = i, choose.n.clust = FALSE, criterion = "diffNgroup") #run main function
+  plot(k$Kstat, type = "b", col = "blue", main = paste0("PCs = ", i), ylab = "BIC", xlab = "k value") #Plot results
+  assign(var, k) #Save output
+}
+```
+
+## Genetic structure
+Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
+The first portion can be skipped if using structure_threader and plot.ly to generate barplots.
+```{r, fig.width = 6,fig.height = 6}
+# sfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*meanQ",full.names = T)
+# slist <- readQ(files=sfiles)
+# 
+# labels <- popmap.filtered
+# labels$sort <- recode(labels$V2, EastGrand_2004="a", EastGrand_2018="b", 
+#                            GrandFalls_2004="c", GrandFalls_2019="d", Woodland_2019="e",
+#                            Milltown_2004="f", Milltown_2018="g",
+#                            Dennis_2004="h")
+#fastStructure barplots don't display easily in markdown so the following code writes to a file called "qplot.png". Colors are not meaningful from one K to the next.
+# #this is kind of clunky
+# pq <- plotQ(slist[c(1,3:9,2),1)],imgoutput="join",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/",outputfilename = "qplot",imgtype="png",basesize=11, grplab=labels[,2:3], selgrp = "sort", ordergrp = T, grplabsize=4, grplabangle = 20,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# 
+# s2 <- readQ("./RH_M3_fastStructure/RH_M3/fS_run_K.2.meanQ", indlabfromfile = FALSE)
+# rownames(s2[[1]]) <- labels$V1
+# pindv <- plotQ(s2,imgoutput="sep",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/RH_M3/",outputfilename = "K2",imgtype="png",basesize=11, selgrp = "sort", grplab=labels, ordergrp = T, grplabsize=2, grplabangle = 90,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# Plot Marginal Likelihood vs. K
+lfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*log",full.names = T)
+lfiles
+k.df <- data.frame(matrix(ncol = 2, nrow = 10))
+names(k.df) <- c("K","Marginal_Likelihood")
+# Filenames are out of order, 10 comes before 2, so need to fix that
+k.df$K <- c(1,10,2,3,4,5,6,7,8,9)
+for (i in 1:length(lfiles)){
+  k.df$Marginal_Likelihood[i] <- 
+    as.numeric(str_sub(grep("Marginal Likelihood = ", 
+                            readLines(lfiles[[i]],),value = TRUE),-13))
+}
+k.df <- k.df[order(k.df$K),]
+# fastStructure provides 2 metrics for determining the "best" K
+readLines("./RH_M3_fastStructure/RH_M3/bestK/chooseK.txt")
+q <- ggplot(k.df, mapping = aes(x=K, y=Marginal_Likelihood))
+q <- q + ylim(-1,-0.5)
+q <- q + geom_point(size=3, shape = 16)
+q <- q + labs(x="K", y="Marginal Likelihood")
+q <- q + theme_classic()
+q
+# ggsave("./SNP_Filtering/RH_M3_fastStructure/RH_M3/Kplot.png", width = 4.5, height=4)
+```
+
+
+## Calculate heterozygosity and FIS
+**This section needs some work. Giving NAs for some populations for Hobs. Also takes a long time to run. Gotta be a better way to do this ... think I can just use a tidy dataframe and a custom function.**
+```{r, echo=FALSE}
+tidy.vcf <- vcfR2tidy(in_vcf)
+tidy.gt <- tidy.vcf$gt %>% left_join(popmap, by = "Indiv")
+
+# options(scipen = 999)
+Sum <- summary(genind)
+
+#These two functions are slow
+Hobs <- t(sapply(seppop(genind), function(ls) summary(ls)$Hobs))
+Hexp <- t(sapply(seppop(genind), function(ls) summary(ls)$Hexp))
+
+Sum$n.by.pop
+Hobs.pop <- apply(Hobs, MARGIN = 1, FUN = mean)
+Hexp.pop <- apply(Hexp, 1, mean) 
+bypop <- seppop(genind)
+
+#This takes a bit to run
+bypop.basic <- lapply(X=bypop, FUN=basic.stats) 
+
+basicstatbypop <- data.frame(matrix(ncol = 10, nrow = 8))
+names(basicstatbypop) <- names(bypop.basic[[1]]$overall)
+for (i in 1:length(bypop)){
+  basicstatbypop[i,] <- bypop.basic[[i]]$overall
+}
+
+gendivstats <- as.data.frame(cbind(levels(genlight@pop),Sum$n.by.pop,round(Hobs.pop, 4),round(Hexp.pop, 4), basicstatbypop$Fis))
+names(gendivstats) <- c("Pop","N", "Hobs", "Hexp", "FIS")
+
+gendivstats$FIS <- as.numeric(gendivstats$FIS)
+# as_tibble(basicstatbypop)
+as_tibble(gendivstats)
+``` 
+
+
+### Get 95% bootstrap CI for FIS
+```{r}
+Fis <- lapply(X=bypop,FUN=boot.ppfis)
+Fis.df <- data.frame(matrix(ncol = 2, nrow = num_pops))
+names(Fis.df) <- c("ll","hl")
+for (i in 1:length(Fis)) {
+  Fis.df$ll[i] <- Fis[[i]][2]$fis.ci[1,1]
+  Fis.df$hl[i] <- Fis[[i]][2]$fis.ci[1,2]
+  }
+Fis.df <- cbind(gendivstats[,c(1,5)],Fis.df)
+as_tibble(Fis.df)
+```
+
+
+## Genetic structure
+Transfer vcf to the cluster and run fastStructure.sh, then copy output directory to working directory. Alternatively, run fastStructure commands from Terminal on own computer. Follow hackmd: https://hackmd.io/rr_rXY6aSGmRBSqnYV6iBA?view
+The first portion can be skipped if using structure_threader and plot.ly to generate barplots.
+```{r, fig.width = 6,fig.height = 6}
+# sfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*meanQ",full.names = T)
+# slist <- readQ(files=sfiles)
+# 
+# labels <- popmap.filtered
+# labels$sort <- recode(labels$V2, EastGrand_2004="a", EastGrand_2018="b", 
+#                            GrandFalls_2004="c", GrandFalls_2019="d", Woodland_2019="e",
+#                            Milltown_2004="f", Milltown_2018="g",
+#                            Dennis_2004="h")
+#fastStructure barplots don't display easily in markdown so the following code writes to a file called "qplot.png". Colors are not meaningful from one K to the next.
+# #this is kind of clunky
+# pq <- plotQ(slist[c(1,3:9,2),1)],imgoutput="join",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/",outputfilename = "qplot",imgtype="png",basesize=11, grplab=labels[,2:3], selgrp = "sort", ordergrp = T, grplabsize=4, grplabangle = 20,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# 
+# s2 <- readQ("./RH_M3_fastStructure/RH_M3/fS_run_K.2.meanQ", indlabfromfile = FALSE)
+# rownames(s2[[1]]) <- labels$V1
+# pindv <- plotQ(s2,imgoutput="sep",returnplot=F,exportplot=T,exportpath="./RH_M3_fastStructure/RH_M3/",outputfilename = "K2",imgtype="png",basesize=11, selgrp = "sort", grplab=labels, ordergrp = T, grplabsize=2, grplabangle = 90,grplabheight = 15,width = 30, linesize=0.8,pointsize=4,panelratio = c(1,1.5))
+# Plot Marginal Likelihood vs. K
+lfiles <- list.files(path = "./RH_M3_fastStructure/RH_M3", pattern = "*log",full.names = T)
+lfiles
+k.df <- data.frame(matrix(ncol = 2, nrow = 10))
+names(k.df) <- c("K","Marginal_Likelihood")
+# Filenames are out of order, 10 comes before 2, so need to fix that
+k.df$K <- c(1,10,2,3,4,5,6,7,8,9)
+for (i in 1:length(lfiles)){
+  k.df$Marginal_Likelihood[i] <- 
+    as.numeric(str_sub(grep("Marginal Likelihood = ", 
+                            readLines(lfiles[[i]],),value = TRUE),-13))
+}
+```
