@@ -32,8 +32,8 @@ Note that the population map should be two columns: sample ID and linked populat
 #Read in VCF file
 in_vcf <- read.vcfR("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/UroFull_M1n6_filtered.vcf", convertNA = T)
 
-#Convert vcf to genlight
-genlight.orig <- vcfR2genlight(in_vcf)
+#Convert vcf to genlight. Save twice: genlight.orig will be preserved if samples are subset and the genlight object will be replaced; if no subsetting is needed, then the file named genlight will be used throughout the rest of the script. 
+genlight.orig = genlight <- vcfR2genlight(in_vcf)
 
 #Read in white list of individuals. This should be a text file with a single column containing the names of the individuals that were retained after filtering.
 whitelist.indvs <- read.delim("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/02_SNP_filtering/UroFull_M1n6/Whitelist_indivs.txt", header = F) %>% pull()
@@ -44,7 +44,7 @@ popmap.orig <- read_tsv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Da
 
 
 #-------------------Subset the full set of samples for analysis------------------------
-#Only run this section if you want to run the analysis on a subset of individuals included in the filtered VCF file. If you want to run on all the samples in the vcf file that was loaded, then skip this section
+#Only run this section if you want to run the analysis on a subset of individuals included in the filtered VCF file. If you want to run on all the samples in the vcf file that was loaded, then skip this section and move on to "Finish creating genlight and genind objects" a few lines below.
 
 #Create a blacklist of individuals that we don't want to include in the analysis so we can drop them from the genlight object
 blacklist.indvs <- popmap.orig %>% dplyr::filter(!Indiv %in% whitelist.indvs) %>% 
@@ -112,7 +112,7 @@ ggscatter(pca1.scores, x = "PC2", y = "PC3", shape = "pop", color = "pop",
 ```
 
 ## Genetic Diversity and FST
-## Recommend running the pair-wise FST estimate ONCE, then writing a file to read in for next steps to avoid ~20 min run times each time the chunk is run
+Recommend running the pair-wise FST estimate ONCE, then writing a file to read in for next steps to avoid ~20 min run times each time the chunk is run.
 ```{r, echo = FALSE}
 #Calculate pairwise FST
 pop.fst <- genet.dist(genind, method = "WC84") # Run time ~20 mins
@@ -131,9 +131,9 @@ melted <- melt(fst.mat, na.rm =TRUE)
 ggplot(data = melted, aes(Var2, Var1, fill = value))+ geom_tile(color = "white")+ scale_fill_gradient(low = "white", high = "navy", name="FST")  + ggtitle(expression(atop("Pairwise FST, WC (1984)", atop(italic("N = 113, L = 4200"), ""))))+labs( x = "Sampling Site", y = "Sampling Site") + theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 11, hjust = 1),axis.text.y = element_text(size = 12)) + coord_fixed()
 ```
 
-### Isolation-by-distance model
+## Isolation-by-distance model
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
-# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude
+# Read in a "regions" file. This file should have at a minimum a column for Population, latitude, and longitude. We assume this is a csv (comma-separate) file.
 region <- read.csv("G://My Drive/MEC_lab_projects.lnk/Uro snail genomics/Data_analyses/snail_RADdata_Summer2022_fullanalyses/03_PopGen/uro_regions.csv", header = T)
 
 #Tibbles will only show a couple sig digits for lat and long, but the full coordinates are stored.
@@ -150,11 +150,10 @@ all_latlon <- popmap.filtered %>% left_join(latlon, by = "STRATA") %>%
 latlon <- all_latlon[,2:3]
 genlight@other$latlong<-latlon
 gl.ibd(genlight)
-
 ```
 
 
-*Show heterozygosity plots and values per population*
+## Heterozygosity
 ```{r}
 het<-as.data.frame(t(genind@tab))
 hetl<-list()
@@ -179,18 +178,8 @@ ggscatter(hetdf, x = "pop", y = "hTot", color = "pop", palette = pop_cols,
 ```
 
 
-
-## Genetic Diversity and FST
-## Genetic distance between locality and year combos. This is FST but can easily change
-```{r, echo = FALSE}
-pop.fst <- genet.dist(genind, method = "WC84")
-pop.fst.df <- as.data.frame(as.matrix(round(pop.fst, 3)))
-pop.fst.df
-# write.csv(pop.fst.df,"RH_M3_fst.csv")
-```
-
-
-*Run the DPCA without any prior information*
+## DAPC 
+### Step 1: Run DAPC without any prior information
 The chunk here is to determine the optimal value of K (clusters) to use for downstream analyses using k-means clustering. As per the documenttaion from `find.clusters`:
 
 "The rule of thumb consists in increasing K until it no longer leads to an appreciable improvement of fit (i.e., to a decrease of BIC). In the most simple models (island models), BIC decreases until it reaches the optimal K, and then increases. In these cases, our rule amounts to choosing the lowest K. In other models such as stepping stones, the decrease of BIC often continues after the optimal K, but is much less steep."
@@ -213,15 +202,15 @@ grp_all$Kstat
 ```
 
 
-Based on the output of the plot above, we select the optimal value of K and observe the number of samples per cluster. Set k to the value with the lowest BIC score.
+### Step 2: Based on the output of the plot above, we select the optimal value of K and observe the number of samples per cluster. Set k to the value with the lowest BIC score.
 ```{r, echo=TRUE}
 k <- 5
 grp_all <- find.clusters(genind, max.n.clust=n_pops, n.pca=200, n.clust = k)
 grp_all$size
 ```
 
-Run the DPCA and generate the plots for visualizing
-Selecting the right number of DAs is important as it impacts the downstream outputs, and too many PCAs can lead to over-fitting the data.
+### Step 3: Run DAPC and generate the plots for visualizing
+Selecting the right number of DAs is important as it impacts the downstream outputs, and too many PCs can lead to over-fitting the data.
 ```{r}
 n.da <- 5 #Set number of DAs
 dapc <- dapc(genind, grp_all$grp, n.pca=60, n.da = n.da, var.contrib = TRUE)
@@ -244,10 +233,8 @@ dapc_info$SITE <- substr(dapc_info$IND, 1,2) #Takes first two letters of the Ind
 dapc_info
 ```
 
-*Now use the first DPCA to inform a secondary DPCA*
-
-**Q:** Why are we calling this a prior? Aren't we just empirically determining the best number of PCs to retain for DAPC?
-
+### Step 4: Now use results from the first DAPC to inform a secondary DAPC
+**JDS Q for Blair:** Why are we calling this a prior? Aren't we just empirically determining the best number of PCs to retain for DAPC?
 ```{r, echo=TRUE}
 set.seed(5); dapc_a_score <- dapc(genind, n.pca=100, n.da=n.da) 
 temp_score <- optim.a.score(dapc_a_score) #Determine best number of PCs to retain for DAPC analysis
@@ -277,7 +264,7 @@ dapc_prior <- merge(dapc_prior, region, by.x = "SITE", by.y = "Population")
 
 ### Make a ggplot graph representing the DAPC for the first and second axes for the regions
 ggscatter(dapc_prior, x = "LD1", y = "LD2", shape = 21, fill = "SITE", size = 3,
-          xlab = "DA1 (30.9%)", ylab = "DA2 (29.9%)", palette = pop_cols)
+          xlab = "DA1", ylab = "DA2", palette = pop_cols)
 
 ### Save the ggplot graph
 ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
@@ -285,8 +272,48 @@ ggsave("DAPC_prior.pdf",width=12,height=10,dpi=600,units="cm",useDingbats=F)
 ```
 
 
+## END MAIN SCRIPT
 
 
+
+
+
+
+
+
+### Still working on this ...
+## Relatedness
+```{r}
+#install.packages("related", repos="http://R-Forge.R-project.org") #Install package 'related'
+library(related)
+help(related)
+
+#Need a tidy dataframe in wide format. First column is individual name, then the rest of the columns identify the alleles.
+vcf.tidy <- vcfR2tidy(in_vcf)
+gt.tidy <- vcf.tidy$gt
+
+related.df1 <- gt.tidy %>% mutate(locus = paste0(ChromKey, "_", POS)) %>%
+  dplyr::select(Indiv, locus, gt_GT) %>%  
+  pivot_wider(names_from = locus, 
+              values_from = gt_GT) %>% 
+  column_to_rownames(var = "Indiv")
+  
+related.df2 <- related.df1 %>% cSplit(splitCols = names(related.df1), sep = "/")
+  
+  
+  separate(sep = "/", convert = TRUE)
+
+
+  mutate(allele_A.orig = as.numeric(allele_A.orig),
+         allele_B.orig = as.numeric(allele_B.orig)) %>% 
+  mutate(allele_A.new = allele_A.orig + 1, 
+         allele_B.new = allele_B.orig + 1) %>%
+  dplyr::select(Indiv, locus1, locus2, allele_A.new, allele_B.new) %>%  
+  pivot_wider(names_from = c(locus1, locus2), values_from = c(allele_A.new, allele_B.new))
+
+
+coancestry(related.df, quellergt=1)
+```
 
 
 
